@@ -1,0 +1,168 @@
+{-# STDLIB_VERSION 3 #-}
+{-# CONTENT_TYPE DAPP #-}
+{-# SCRIPT_TYPE ACCOUNT #-}
+
+# init playTime with who is calling the function
+@Callable(i)
+func initPlayTime() = {
+  let player1 = toBase58String(i.caller.bytes)  
+
+  WriteSet([
+    DataEntry(player1 + "_player2", ""),    
+    DataEntry(player1 + "_player1Played", false),
+    DataEntry(player1 + "_player2Played", false), 
+    DataEntry(player1 + "_player1Deposit", 0),
+    DataEntry(player1 + "_player2Deposit", 0),
+    DataEntry(player1 + "_gameFinished", false),
+    DataEntry(player1 + "_theWinner", ""),  
+    DataEntry(player1 + "_gains", 0)
+  ])
+}
+
+# A second player can register as an opponent at player1 game
+@Callable(i)
+func registerPlayer2(player1: String) = {
+  let gameFinished = getBooleanValue(this, player1 + "_gameFinished")
+  if (gameFinished) then throw("game finished")
+  else {
+    let player2 = toBase58String(i.caller.bytes)  
+
+    WriteSet([
+      DataEntry(player1 + "_player2", player2)
+    ])
+  }
+}
+
+
+# Every round a player can put a sum of ether, 
+# if one of the player put in twice or more the money (in total) than the other did, the first wins
+@Callable(i)
+func play(player1: String) = {
+  let gameFinished = getBooleanValue(this, player1 + "_gameFinished")
+  if (gameFinished) then throw("game finished")
+  else {
+    let playValue = extract(i.payment) 
+    let playValueAmount = playValue.amount   
+    if (isDefined(playValue.assetId)) then throw("can play only with waves")
+    else {
+      let currentKeyPlayer = toBase58String(i.caller.bytes)
+      let player2 = getStringValue(this, player1 + "_player2")      
+      if( (currentKeyPlayer != player1) && (currentKeyPlayer != player2)) 
+          then throw("you are NOT a player now")
+      else {
+        let player1Deposit = getIntegerValue(this, player1 + "_player1Deposit") 
+        let player2Deposit = getIntegerValue(this, player1 + "_player2Deposit") 
+        let player1Played = getBooleanValue(this, player1 + "_player1Played")
+        let player2Played = getBooleanValue(this, player1 + "_player2Played")
+
+        if (currentKeyPlayer == player1) then {
+          if (player1Played) then throw("player1 played")
+          else {
+            let amount = player1Deposit + playValueAmount
+            if (player2Played) then {
+              if(player1Deposit >= player2Deposit * 2) then {
+                WriteSet([
+                  DataEntry(player1 + "_player1Played", true), 
+                  DataEntry(player1 + "_player1Deposit", amount),
+                  DataEntry(player1 + "_gameFinished", true),
+                  DataEntry(player1 + "_theWinner", player1),  
+                  DataEntry(player1 + "_gains", player1Deposit + player2Deposit)
+                ])
+              } else if (player2Deposit >= player1Deposit * 2) then {
+                WriteSet([
+                  DataEntry(player1 + "_player1Played", true),
+                  DataEntry(player1 + "_player1Deposit", amount),
+                  DataEntry(player1 + "_gameFinished", true),
+                  DataEntry(player1 + "_theWinner", player2),  
+                  DataEntry(player1 + "_gains", player1Deposit + player2Deposit)
+                ])
+              } else {
+                WriteSet([
+                  DataEntry(player1 + "_player1Played", false),
+                  DataEntry(player1 + "_player2Played", false), 
+                  DataEntry(player1 + "_player1Deposit", amount)
+                ])
+              }                    
+            }   # player1Played && player2Played
+            else {
+              WriteSet([
+                DataEntry(player1 + "_player1Played", true),
+                DataEntry(player1 + "_player1Deposit", amount)
+              ])
+            } # only player1Played 
+          }                  
+        } # player1
+        else {
+          # player2
+          if (player2Played) then throw("player2 played")
+          else {
+            let amount = player2Deposit + playValueAmount
+            if (player1Played) then {
+              if(player1Deposit >= player2Deposit * 2) then {
+                WriteSet([
+                  DataEntry(player1 + "_player2Played", true), 
+                  DataEntry(player1 + "_player2Deposit", amount),
+                  DataEntry(player1 + "_gameFinished", true),
+                  DataEntry(player1 + "_theWinner", player1),  
+                  DataEntry(player1 + "_gains", player1Deposit + player2Deposit)
+                ])
+              } else if (player2Deposit >= player1Deposit * 2) then {
+                WriteSet([
+                  DataEntry(player1 + "_player2Played", true),
+                  DataEntry(player1 + "_player2Deposit", amount),
+                  DataEntry(player1 + "_gameFinished", true),
+                  DataEntry(player1 + "_theWinner", player2),  
+                  DataEntry(player1 + "_gains", player1Deposit + player2Deposit)
+                ])
+              } else {
+                WriteSet([
+                  DataEntry(player1 + "_player1Played", false),
+                  DataEntry(player1 + "_player2Played", false), 
+                  DataEntry(player1 + "_player2Deposit", amount)
+                ])
+              }                    
+            }   # player1Played && player2Played
+            else {
+              WriteSet([
+                DataEntry(player1 + "_player2Played", true),
+                DataEntry(player1 + "_player2Deposit", amount)
+              ])
+            } # only player2Played
+          }
+        } # player2
+
+      } # only registered players
+    } # only waves    
+
+  }   # not gameFinished
+}
+
+@Callable(i)
+func withdraw(player1: String) = {
+  let gameFinished = getBooleanValue(this, player1 + "_gameFinished")
+  if (!gameFinished) then throw("game is NOT finished")
+  else {
+    let currentKeyPlayer = toBase58String(i.caller.bytes)
+    let theWinner = getStringValue(this, player1 + "_theWinner")
+
+    if(currentKeyPlayer != theWinner) then throw("you are NOT the winner")
+    else {
+      let gains = getIntegerValue(this, player1 + "_gains")
+      ScriptResult(
+        # reset game, player1 can play again with any player2
+        WriteSet([
+          DataEntry(player1 + "_isPlaying", false),
+          DataEntry(player1 + "_player2", ""),    
+          DataEntry(player1 + "_player1Played", false),
+          DataEntry(player1 + "_player2Played", false), 
+          DataEntry(player1 + "_player1Deposit", 0),
+          DataEntry(player1 + "_player2Deposit", 0),
+          DataEntry(player1 + "_gameFinished", false),
+          DataEntry(player1 + "_theWinner", ""),  
+          DataEntry(player1 + "_gains", 0)
+        ]),
+        TransferSet([ScriptTransfer(i.caller, gains, unit)])
+      )
+    }   # theWinner
+  }   # gameFinished
+}
